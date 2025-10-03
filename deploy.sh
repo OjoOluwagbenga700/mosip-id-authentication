@@ -91,24 +91,24 @@ volumes:
 EOF
     fi
     
-    docker-compose up -d
+    docker compose up -d
     echo "✅ Services deployed"
     ;;
     
   "stop")
     echo "🛑 Stopping services..."
-    docker-compose down
+    docker compose down
     echo "✅ Services stopped"
     ;;
     
   "status")
     echo "📊 Service status..."
-    docker-compose ps
+    docker compose ps
     ;;
     
   "logs")
     echo "📋 Service logs..."
-    docker-compose logs -f
+    docker compose logs -f
     ;;
     
   *)
