@@ -1,0 +1,228 @@
+name: Build and Deploy ID Authentication Services
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: ${{ secrets.DOCKER_HUB_USERNAME }}/ida
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: authentication-service
+            port: 8090
+            image: ida-auth-service
+          - name: authentication-internal-service
+            port: 8093
+            image: ida-internal-service
+          - name: authentication-otp-service
+            port: 8092
+            image: ida-otp-service
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Build Maven project
+      run: |
+        cd authentication
+        mvn clean install -DskipTests=true -Dmaven.javadoc.skip=true -Dgpg.skip=true
+        
+    - name: Verify JAR files created
+      run: |
+        find authentication -name "*.jar" -type f | head -10
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.image }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./authentication/${{ matrix.service.name }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          COMMIT_HASH=${{ github.sha }}
+          COMMIT_ID=${{ github.run_id }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create deployment files
+      run: |
+        mkdir -p deploy
+        
+        # Create docker-compose.yml
+        cat > deploy/docker-compose.yml << 'EOF'
+        version: '3.8'
+        
+        services:
+          postgres:
+            image: postgres:13
+            environment:
+              POSTGRES_DB: mosip_ida
+              POSTGRES_USER: idauser
+              POSTGRES_PASSWORD: mosip123
+            ports:
+              - "5432:5432"
+            volumes:
+              - postgres_data:/var/lib/postgresql/data
+              - ../db_scripts/mosip_ida:/docker-entrypoint-initdb.d
+            healthcheck:
+              test: ["CMD-SHELL", "pg_isready -U idauser -d mosip_ida"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+        
+          ida-auth-service:
+            image: ${{ env.IMAGE_PREFIX }}-ida-auth-service:latest
+            ports:
+              - "8090:8090"
+            environment:
+              - spring_profiles_active=docker
+              - mosip_ida_database_hostname=postgres
+              - mosip_ida_database_port=5432
+              - mosip_ida_database_user=idauser
+              - mosip_ida_database_password=mosip123
+            depends_on:
+              postgres:
+                condition: service_healthy
+            restart: unless-stopped
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:8090/idauthentication/v1/actuator/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+        
+          ida-internal-service:
+            image: ${{ env.IMAGE_PREFIX }}-ida-internal-service:latest
+            ports:
+              - "8093:8093"
+            environment:
+              - spring_profiles_active=docker
+              - mosip_ida_database_hostname=postgres
+            depends_on:
+              postgres:
+                condition: service_healthy
+            restart: unless-stopped
+        
+          ida-otp-service:
+            image: ${{ env.IMAGE_PREFIX }}-ida-otp-service:latest
+            ports:
+              - "8092:8092"
+            environment:
+              - spring_profiles_active=docker
+              - mosip_ida_database_hostname=postgres
+            depends_on:
+              postgres:
+                condition: service_healthy
+            restart: unless-stopped
+        
+        volumes:
+          postgres_data:
+        EOF
+
+    - name: Deploy to environment
+      run: |
+        echo "Deploying to ${{ github.event.inputs.environment || 'dev' }}"
+        # Add your deployment commands here
+        # Example: kubectl apply -f deploy/ or docker-compose up -d
+
+    - name: Upload deployment artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-files
+        path: deploy/
+
+  test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Download deployment files
+      uses: actions/download-artifact@v3
+      with:
+        name: deployment-files
+        path: deploy/
+
+    - name: Run integration tests
+      run: |
+        cd deploy
+        docker-compose up -d
+        sleep 60
+        
+        # Test services
+        curl -f http://localhost:8090/idauthentication/v1/actuator/health || exit 1
+        curl -f http://localhost:8092/idauthentication/v1/actuator/health || exit 1
+        curl -f http://localhost:8093/idauthentication/v1/actuator/health || exit 1
+        
+        docker-compose down
+
+  notify:
+    needs: [build, deploy, test]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Notify deployment status
+      run: |
+        if [ "${{ needs.test.result }}" == "success" ]; then
+          echo "✅ Deployment successful"
+        else
+          echo "❌ Deployment failed"
+          exit 1
+        fi
