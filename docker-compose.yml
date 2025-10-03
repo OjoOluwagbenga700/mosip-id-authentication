@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: mosip_ida
+      POSTGRES_USER: idauser
+      POSTGRES_PASSWORD: mosip123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  ida-auth-service:
+    image: ojosamuel/ida-ida-auth-service:latest
+    ports:
+      - "8090:8090"
+    environment:
+      - spring_profiles_active=docker
+      - mosip_ida_database_hostname=postgres
+      - artifactory_url_env=https://oss.sonatype.org
+      - iam_adapter_url_env=https://oss.sonatype.org/service/local/repositories/releases/content/io/mosip/kernel/kernel-auth-adapter/1.2.0.1/kernel-auth-adapter-1.2.0.1.jar
+      - is_glowroot_env=absent
+      - spring_config_url_env=http://localhost:8888
+      - spring_config_label_env=master
+      - active_profile_env=docker
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
