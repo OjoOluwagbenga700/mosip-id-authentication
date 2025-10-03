@@ -33,7 +33,7 @@ jobs:
     - name: Build Maven project
       run: |
         cd authentication
-        mvn clean compile -DskipTests=true
+        mvn clean install -DskipTests=true -Dmaven.javadoc.skip=true -Dgpg.skip=true
 
     - name: Build Docker images (no push)
       run: |
