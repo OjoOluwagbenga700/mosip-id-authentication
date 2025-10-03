@@ -1,0 +1,54 @@
+name: Build Docker Images Only
+
+on:
+  push:
+    branches: [ feature ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: ida
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+
+    - name: Build Maven project
+      run: |
+        cd authentication
+        mvn clean compile -DskipTests=true
+
+    - name: Build Docker images (no push)
+      run: |
+        cd authentication
+        
+        # Build authentication-service
+        docker build -t ${{ env.IMAGE_PREFIX }}-auth-service:${{ github.sha }} authentication-service/
+        
+        # Build authentication-internal-service
+        docker build -t ${{ env.IMAGE_PREFIX }}-internal-service:${{ github.sha }} authentication-internal-service/
+        
+        # Build authentication-otp-service
+        docker build -t ${{ env.IMAGE_PREFIX }}-otp-service:${{ github.sha }} authentication-otp-service/
+
+    - name: Test Docker images
+      run: |
+        docker images | grep ${{ env.IMAGE_PREFIX }}-
+        echo "✅ All Docker images built successfully"
