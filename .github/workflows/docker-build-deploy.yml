@@ -182,7 +182,7 @@ jobs:
         # Example: kubectl apply -f deploy/ or docker-compose up -d
 
     - name: Upload deployment artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: deployment-files
         path: deploy/
@@ -194,7 +194,7 @@ jobs:
     
     steps:
     - name: Download deployment files
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: deployment-files
         path: deploy/
@@ -202,7 +202,7 @@ jobs:
     - name: Run integration tests
       run: |
         cd deploy
-        docker-compose up -d
+        docker compose up -d
         sleep 60
         
         # Test services
@@ -210,7 +210,7 @@ jobs:
         curl -f http://localhost:8092/idauthentication/v1/actuator/health || exit 1
         curl -f http://localhost:8093/idauthentication/v1/actuator/health || exit 1
         
-        docker-compose down
+        docker compose down
 
   notify:
     needs: [build, deploy, test]
