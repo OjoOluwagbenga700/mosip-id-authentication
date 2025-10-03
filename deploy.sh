@@ -38,9 +38,13 @@ case $ACTION in
     # Create docker-compose file if not exists
     if [ ! -f docker-compose.yml ]; then
       echo "Creating docker-compose.yml..."
-      cat > docker-compose.yml << 'EOF'
-version: '3.8'
-
+      if [ -n "$DOCKER_HUB_USERNAME" ]; then
+        IMAGE_PREFIX="$DOCKER_HUB_USERNAME/ida"
+      else
+        IMAGE_PREFIX="ida"
+      fi
+      
+      cat > docker-compose.yml << EOF
 services:
   postgres:
     image: postgres:13
@@ -54,7 +58,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   ida-auth-service:
-    image: ${DOCKER_HUB_USERNAME:-ida}-auth-service:latest
+    image: ${IMAGE_PREFIX}-auth-service:latest
     ports:
       - "8090:8090"
     environment:
@@ -65,7 +69,7 @@ services:
     restart: unless-stopped
 
   ida-internal-service:
-    image: ${DOCKER_HUB_USERNAME:-ida}-internal-service:latest
+    image: ${IMAGE_PREFIX}-internal-service:latest
     ports:
       - "8093:8093"
     environment:
@@ -76,7 +80,7 @@ services:
     restart: unless-stopped
 
   ida-otp-service:
-    image: ${DOCKER_HUB_USERNAME:-ida}-otp-service:latest
+    image: ${IMAGE_PREFIX}-otp-service:latest
     ports:
       - "8092:8092"
     environment:
